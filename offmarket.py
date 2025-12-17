@@ -12,34 +12,57 @@ def get_county_leads(zips):
     total_steps = len(zips)
     
     for i, zip_code in enumerate(zips):
-        my_bar.progress(int((i / total_steps) * 100), text=f"Scanning {zip_code} in County Database...")
+        my_bar.progress(int((i / total_steps) * 100), text=f"Scanning {zip_code}...")
         
-        # FRANKLIN COUNTY
+        # 1. FRANKLIN COUNTY
         try:
             f_url = "https://gis.franklincountyohio.gov/hosting/rest/services/ParcelFeatures/Parcel_Features/MapServer/0/query"
-            params = {'where': f"ZIP_CODE='{zip_code}' AND LAST_SALE_YEAR<2015", 'outFields': 'SITE_ADDRESS,OWNER_NAME,LAST_SALE_YEAR', 'f': 'json', 'resultRecordCount': 20}
+            params = {
+                'where': f"ZIPCD='{zip_code}' AND SALEDATE < '2015-01-01' AND SALEDATE IS NOT NULL", 
+                'outFields': 'SITEADDRESS,OWNERNME1,SALEDATE,ZIPCD', 
+                'f': 'json', 
+                'resultRecordCount': 25
+            }
             res = requests.get(f_url, params=params, timeout=5)
             if res.status_code == 200:
                 features = res.json().get('features', [])
                 for f in features:
-                    leads.append({"Address": f['attributes'].get('SITE_ADDRESS'), "Owner": f['attributes'].get('OWNER_NAME'), "Zip": zip_code, "Source": "Franklin Co", "Year": f['attributes'].get('LAST_SALE_YEAR')})
+                    attr = f['attributes']
+                    leads.append({
+                        "Address": attr.get('SITEADDRESS'), 
+                        "Owner": attr.get('OWNERNME1'), 
+                        "Zip": attr.get('ZIPCD'), 
+                        "Source": "Franklin Co (Free)",
+                        "Strategy": "High Equity"
+                    })
         except: pass
 
-        # DELAWARE COUNTY
+        # 2. DELAWARE COUNTY (Fast Fail)
         try:
             d_url = "https://maps.delco-gis.org/arcgiswebadaptor/rest/services/AuditorGISWebsite/AuditorMap_PriorYearParcels_WM/MapServer/0/query"
-            params = {'where': f"PROP_ZIP='{zip_code}' AND SALEYEAR<2015", 'outFields': 'PROP_ADDR,OWNER,SALEYEAR', 'f': 'json', 'resultRecordCount': 20}
-            res = requests.get(d_url, params=params, timeout=5)
+            params = {
+                'where': f"PROP_ZIP='{zip_code}' AND SALEYEAR<2015", 
+                'outFields': 'PROP_ADDR,OWNER,SALEYEAR', 
+                'f': 'json', 
+                'resultRecordCount': 10
+            }
+            res = requests.get(d_url, params=params, timeout=2)
             if res.status_code == 200:
                 features = res.json().get('features', [])
                 for f in features:
-                    leads.append({"Address": f['attributes'].get('PROP_ADDR'), "Owner": f['attributes'].get('OWNER'), "Zip": zip_code, "Source": "Delaware Co", "Year": f['attributes'].get('SALEYEAR')})
+                    leads.append({
+                        "Address": f['attributes'].get('PROP_ADDR'), 
+                        "Owner": f['attributes'].get('OWNER'), 
+                        "Zip": zip_code, 
+                        "Source": "Delaware Co (Free)",
+                        "Strategy": "High Equity"
+                    })
         except: pass
 
     my_bar.empty()
     return pd.DataFrame(leads)
 
-# --- B. PAID METHOD (Parcl) ---
+# --- B. PAID METHOD (Parcl Database) ---
 def get_parcl_leads(zips, api_key):
     cost = len(zips) * 10
     try:
@@ -60,31 +83,35 @@ def get_parcl_leads(zips, api_key):
             # 1. GET ID
             res = requests.get("https://api.parcllabs.com/v1/search/markets", headers=headers, params={"query": zip_code, "location_type": "ZIP5", "limit": 1})
             
-            if res.status_code != 200:
-                st.warning(f"API Error {res.status_code}")
-                continue
-
+            if res.status_code != 200: continue
             data = res.json()
-            
-            # 🛠️ THE FIX: Look inside 'items' list!
             items_list = data.get('items', [])
+            if not items_list: continue
+            pid = items_list[0]['parcl_id']
             
-            if not items_list:
-                st.warning(f"Zip {zip_code} not found in Parcl.")
-                continue
-
-            pid = items_list[0]['parcl_id'] # <--- SUCCESS!
+            # 2. SEARCH PROPERTIES (Corrected URL & Payload)
+            url = "https://api.parcllabs.com/v2/property_search"  # <--- FIXED URL
             
-            # 2. SEARCH PROPERTIES
-            url = "https://api.parcllabs.com/v2/property/search"
-            payload = {"parcl_ids": [pid], "property_filters": {"property_types": ["SINGLE_FAMILY"]}, "limit": 10}
-            res = requests.post(url, headers=headers, json=payload)
+            # BODY: Only contains filters
+            payload = {
+                "parcl_ids": [pid],
+                "property_filters": {"property_types": ["SINGLE_FAMILY"]}
+            }
+            
+            # URL PARAMS: Contains limits/pagination
+            query_params = {
+                "limit": 10,  # <--- MOVED HERE
+                "offset": 0
+            }
+            
+            res = requests.post(url, headers=headers, json=payload, params=query_params)
             
             if res.status_code != 200:
+                st.warning(f"Parcl Error {res.status_code}: {res.text}")
                 continue
 
-            prop_items = res.json().get('items', [])
-            for item in prop_items:
+            items = res.json().get('items', [])
+            for item in items:
                 p = item.get('property_metadata', {})
                 address = f"{p.get('address1')}, {p.get('city')}"
                 leads.append({
