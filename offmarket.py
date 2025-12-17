@@ -5,7 +5,7 @@ import credits
 from datetime import datetime
 import urllib3
 
-# Disable warnings for self-signed certificates (common on gov sites)
+# Disable SSL warnings for government sites (crucial for Delaware/older servers)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- HELPER: DATE CONVERTER ---
@@ -28,7 +28,6 @@ def parse_county_date(date_val):
         cleaned = ''.join(filter(str.isdigit, date_val))
         if len(cleaned) >= 4:
             return int(cleaned[:4])
-            
     return None
 
 # --- A. FREE METHOD (County Data) ---
@@ -41,7 +40,7 @@ def get_county_leads(zips):
     status_area = st.empty()
     total_steps = len(zips)
     
-    # 🛡️ BROWSER HEADERS (The Disguise)
+    # 🛡️ DISGUISE HEADERS (Crucial for Delaware/Government servers)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -49,7 +48,8 @@ def get_county_leads(zips):
     for i, zip_code in enumerate(zips):
         my_bar.progress(int((i / total_steps) * 100), text=f"Scanning {zip_code}...")
         
-        # 1. FRANKLIN COUNTY (Using the proven "Fetch All" method)
+        # 1. FRANKLIN COUNTY
+        # LOGIC: Try Zip as String ('43081') AND as Number (43081)
         f_url = "https://gis.franklincountyohio.gov/hosting/rest/services/ParcelFeatures/Parcel_Features/MapServer/0/query"
         queries = [f"ZIPCD='{zip_code}'", f"ZIPCD={zip_code}"]
         found_franklin = False
@@ -57,6 +57,7 @@ def get_county_leads(zips):
         for q in queries:
             if found_franklin: break
             try:
+                # Retrieve ALL records for Zip (filtering happens in Python below)
                 params = {
                     'where': q, 
                     'outFields': 'SITEADDRESS,OWNERNME1,SALEDATE,ZIPCD', 
@@ -68,12 +69,15 @@ def get_county_leads(zips):
                 if res.status_code == 200:
                     features = res.json().get('features', [])
                     if not features: continue
+                    
                     found_franklin = True
+                    status_area.text(f"✅ Franklin: Found {len(features)} records. Filtering...")
                     
                     for f in features:
                         attr = f['attributes']
                         sold_year = parse_county_date(attr.get('SALEDATE'))
                         
+                        # STRATEGY: Keep if < 2015 OR Date is Missing (Legacy)
                         strategy = "Unknown"
                         keep = False
                         if sold_year and sold_year < 2015:
@@ -91,18 +95,14 @@ def get_county_leads(zips):
                                 "Source": "Franklin Co",
                                 "Strategy": strategy
                             })
-            except: pass
+            except Exception as e:
+                print(f"Franklin Error: {e}")
 
-        # 2. DELAWARE COUNTY (FIXED!)
+        # 2. DELAWARE COUNTY
         try:
             d_url = "https://maps.delco-gis.org/arcgiswebadaptor/rest/services/AuditorGISWebsite/AuditorMap_PriorYearParcels_WM/MapServer/0/query"
             
-            # STRATEGY CHANGE: 
-            # 1. Simplified Query (Just Zip, no date math on server)
-            # 2. Added Headers (Look like a browser)
-            # 3. Increased Timeout (10s)
-            # 4. verify=False (Skip SSL check if their cert is old)
-            
+            # Simplified query (Zip only) + Verify=False to bypass SSL errors
             params = {
                 'where': f"PROP_ZIP='{zip_code}'", 
                 'outFields': 'PROP_ADDR,OWNER,SALEYEAR', 
@@ -115,14 +115,12 @@ def get_county_leads(zips):
             if res.status_code == 200:
                 features = res.json().get('features', [])
                 if features:
-                    status_area.text(f"✅ Delaware: Found {len(features)} raw records for {zip_code}.")
+                    status_area.text(f"✅ Delaware: Found {len(features)} records.")
                 
                 for f in features:
                     attr = f['attributes']
                     raw_year = attr.get('SALEYEAR')
                     
-                    # Delaware Year Logic (Usually strictly integer)
-                    # We keep it if it's OLD (<2015) or MISSING (Legacy)
                     keep = False
                     strategy = "Unknown"
                     
@@ -142,8 +140,7 @@ def get_county_leads(zips):
                             "Strategy": strategy
                         })
         except Exception as e:
-            # Print error to console so you can see it in logs if needed
-            print(f"Delaware Error on {zip_code}: {e}")
+            print(f"Delaware Error: {e}")
 
     my_bar.empty()
     status_area.empty()
@@ -176,7 +173,7 @@ def get_parcl_leads(zips, api_key):
             if not items_list: continue
             pid = items_list[0]['parcl_id']
             
-            # 2. SEARCH PROPERTIES
+            # 2. SEARCH PROPERTIES (Corrected V2 Endpoint)
             url = "https://api.parcllabs.com/v2/property_search"
             payload = {"parcl_ids": [pid], "property_filters": {"property_types": ["SINGLE_FAMILY"]}}
             params = {"limit": 10, "offset": 0} 
