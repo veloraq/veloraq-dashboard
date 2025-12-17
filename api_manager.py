@@ -41,7 +41,7 @@ class RealEstateAPI:
         return status
 
     # ==========================
-    # 🏡 ACTIVE LISTINGS (DEBUG MODE)
+    # 🏡 ACTIVE LISTINGS (ZILLOW -> REDFIN FALLBACK)
     # ==========================
     def get_active_listings(self, zips, days_back=7):
         if not self.apify_key:
@@ -51,29 +51,25 @@ class RealEstateAPI:
         all_homes = []
         
         for z in zips:
+            # --- ATTEMPT 1: ZILLOW ---
+            # Actor: maxcopell/zillow-zip-search
             try:
-                # --- ATTEMPT 1: ZILLOW ---
-                # Actor: maxcopell/zillow-zip-search
                 url = f"https://api.apify.com/v2/acts/maxcopell~zillow-zip-search/run-sync-get-dataset-items?token={self.apify_key}"
                 
+                # 🛠️ FIX IS HERE: Changed 'zipCode' (singular) to 'zipCodes' (list)
                 payload = {
-                    "zipCode": z,  # Singular 'zipCode' is safer for this specific actor
+                    "zipCodes": [str(z)], 
                     "maxItems": 20,
-                    "daysOnZillow": days_back
+                    "daysOnZillow": int(days_back)
                 }
                 
-                # Timeout increased to 180s (Scrapers can be slow)
                 res = requests.post(url, json=payload, timeout=180)
                 
                 if res.status_code in [200, 201]:
                     data = res.json()
                     
-                    # 🛡️ SAFETY CHECK: Is it a List or a Dict?
                     if isinstance(data, list):
-                        # SUCCESS: It's a list of homes
-                        if not data:
-                            st.warning(f"⚠️ Zillow found 0 listings for {z}.")
-                        
+                        # Success! Found listings
                         for item in data:
                             all_homes.append({
                                 "Address": item.get('address', {}).get('streetAddress', 'N/A'),
@@ -85,16 +81,44 @@ class RealEstateAPI:
                                 "Zip": z,
                                 "URL": item.get('url')
                             })
-                    elif isinstance(data, dict):
-                        # FAILURE: It's an error message disguised as a 200 OK
-                        # Usually contains "status": "FAILED" or similar
-                        st.warning(f"⚠️ Apify returned a status message, not listings for {z}:")
-                        st.json(data) # Show the error structure to the user
+                    else:
+                        # If Zillow fails silently or returns an object, log it and try Redfin
+                        print(f"Zillow returned non-list data for {z}, skipping.")
                 else:
-                    st.error(f"❌ Zillow Error ({z}): {res.status_code} - {res.text}")
-            
+                    print(f"Zillow Failed ({res.status_code}), switching to fallback.")
+
             except Exception as e:
-                st.error(f"❌ Connection Error ({z}): {str(e)}")
+                print(f"Zillow Connection Failed: {e}")
+
+            # --- ATTEMPT 2: REDFIN (Fallback) ---
+            # Only runs if Zillow found nothing for this zip
+            current_zip_results = [h for h in all_homes if h['Zip'] == z]
+            if not current_zip_results:
+                try:
+                    url = f"https://api.apify.com/v2/acts/tri_angle~redfin-search/run-sync-get-dataset-items?token={self.apify_key}"
+                    payload = {
+                        "location": z,
+                        "offerTypes": ["sale"],
+                        "propertyTypes": ["house", "condo", "land", "multifamily"],
+                        "maxResultsPerProvider": 20
+                    }
+                    res = requests.post(url, json=payload, timeout=180)
+                    if res.status_code in [200, 201]:
+                        data = res.json()
+                        if isinstance(data, list):
+                            for item in data:
+                                all_homes.append({
+                                    "Address": item.get('address', 'N/A'),
+                                    "City": item.get('city', 'N/A'),
+                                    "Price": item.get('price', 0),
+                                    "Beds": item.get('beds'),
+                                    "Type": item.get('propertyType', 'Unknown'),
+                                    "Source": "Redfin",
+                                    "Zip": z,
+                                    "URL": item.get('url')
+                                })
+                except Exception as e:
+                    st.error(f"❌ Redfin Fallback also failed for {z}: {e}")
 
         if all_homes:
             return pd.DataFrame(all_homes)
