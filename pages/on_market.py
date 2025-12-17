@@ -5,7 +5,7 @@ from utils.csv_export import export_to_csv
 from utils.investment_calculator import calculate_investment_analysis
 from utils.data_cache import save_properties_cache, load_properties_cache, format_timestamp
 from config import COLUMBUS_ZIP_CODES
-
+from datetime import datetime
 
 st.title("📍 On-Market Listings")
 st.markdown("Recently listed properties from the last 7 days")
@@ -44,20 +44,44 @@ if st.session_state.get('fetch_live_data', False) and st.session_state.get('apif
             from utils.api_manager import RealEstateAPI
             api = RealEstateAPI(apify_key=st.session_state.apify_api_key)
             
-            # Fetch properties for Columbus zip codes
-            all_properties = []
-            for zip_code in COLUMBUS_ZIP_CODES[:3]:  # Limit to 3 zip codes to save credits
-                properties = api.get_properties_by_zipcode(zip_code, limit=10)
-                all_properties.extend(properties)
+            selected_zips = st.session_state.get('selected_zips', [43201, 43203, 43206])
+            st.info(f"Searching {len(selected_zips)} zip codes: {', '.join(map(str, selected_zips))}")
             
-            if all_properties:
-                # Convert to DataFrame
+            # Fetch properties using the correct API method
+            properties_df = api.get_active_listings(selected_zips, days_back=7)
+            
+            if not properties_df.empty:
+                # Convert API DataFrame to our format
+                all_properties = []
+                for _, row in properties_df.iterrows():
+                    all_properties.append({
+                        'id': f"{row.get('Zip', '')}_{row.get('Address', '')[:10]}",
+                        'address': row.get('Address', 'N/A'),
+                        'city': row.get('City', 'Columbus'),
+                        'zip': str(row.get('Zip', '')),
+                        'property_type': 'Single Family',  # Default, could be enhanced
+                        'list_price': float(row.get('Price', 0)),
+                        'bedrooms': int(row.get('Beds', 0)) if row.get('Beds') else 0,
+                        'bathrooms': float(row.get('Baths', 0)) if row.get('Baths') else 0,
+                        'sqft': 0,  # Not provided by API
+                        'lot_size': 0,  # Not provided by API
+                        'year_built': 0,  # Not provided by API
+                        'list_date': datetime.now().strftime('%Y-%m-%d'),
+                        'days_on_market': 1,
+                        'property_tax': 0,  # Will need to be estimated
+                        'hoa_fee': 0,
+                        'estimated_rent': 0,  # Will need to be estimated
+                        'description': f"Property from {row.get('Source', 'N/A')}",
+                        'source': row.get('Source', 'N/A'),
+                        'url': row.get('URL', '')
+                    })
+                
                 df = pd.DataFrame(all_properties)
                 
                 timestamp = save_properties_cache(df, "on_market", use_google_sheets=use_google_sheets)
                 
                 cache_type = "Google Sheets" if use_google_sheets else "local cache"
-                st.success(f"Fetched {len(all_properties)} live properties and saved to {cache_type}!")
+                st.success(f"Fetched {len(all_properties)} live properties from {properties_df['Source'].unique().tolist()} and saved to {cache_type}!")
                 st.session_state.live_properties_df = df
             else:
                 st.warning("No properties found. Using cached or demo data.")
@@ -81,8 +105,22 @@ else:
     else:
         df = get_on_market_df()
 
+if 'selected_zips' not in st.session_state:
+    st.session_state.selected_zips = [43201, 43203, 43206]
+
 # Filters
 st.sidebar.markdown("### Filters")
+
+st.sidebar.markdown("#### Search Area")
+selected_zips = st.sidebar.multiselect(
+    "Select Zip Codes to Search",
+    options=COLUMBUS_ZIP_CODES,
+    default=st.session_state.selected_zips,
+    help="Choose which Columbus zip codes to fetch properties from"
+)
+
+if not selected_zips:
+    st.sidebar.warning("Please select at least one zip code")
 
 property_types = ["All"] + sorted(df["property_type"].unique().tolist())
 selected_type = st.sidebar.selectbox("Property Type", property_types)
@@ -115,18 +153,6 @@ filtered_df = filtered_df[
 
 filtered_df = filtered_df[filtered_df["bedrooms"] >= min_beds]
 filtered_df = filtered_df[filtered_df["days_on_market"] <= max_dom]
-
-# Sort options
-sort_by = st.selectbox("Sort By", ["Price (Low to High)", "Price (High to Low)", "Days on Market", "Newest Listings"])
-
-if sort_by == "Price (Low to High)":
-    filtered_df = filtered_df.sort_values("list_price", ascending=True)
-elif sort_by == "Price (High to Low)":
-    filtered_df = filtered_df.sort_values("list_price", ascending=False)
-elif sort_by == "Days on Market":
-    filtered_df = filtered_df.sort_values("days_on_market", ascending=True)
-elif sort_by == "Newest Listings":
-    filtered_df = filtered_df.sort_values("list_date", ascending=False)
 
 st.markdown(f"### Found {len(filtered_df)} Properties")
 
@@ -185,3 +211,6 @@ for idx, row in filtered_df.iterrows():
                 st.metric("Annual Cash Flow", f"${analysis['cash_flow_annual']:,.0f}")
                 st.metric("Cap Rate", f"{analysis['cap_rate']:.2f}%")
                 st.metric("Cash-on-Cash Return", f"{analysis['cash_on_cash_return']:.2f}%")
+
+# Save selected zip codes to session state
+st.session_state.selected_zips = selected_zips
