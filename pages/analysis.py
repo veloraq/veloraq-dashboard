@@ -1,10 +1,64 @@
 import streamlit as st
 from utils.investment_calculator import calculate_investment_analysis
+from utils.data_cache import load_properties_cache, format_timestamp
 import pandas as pd
 
 
 st.title("📊 Investment Analysis Calculator")
 st.markdown("Calculate detailed financial metrics for any investment property")
+
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.markdown("### Property Selection")
+with col2:
+    # Check for cached data
+    on_market_df, on_timestamp = load_properties_cache("on_market")
+    off_market_df, off_timestamp = load_properties_cache("off_market")
+    
+    if on_market_df is not None or off_market_df is not None:
+        st.info("📂 Using cached data")
+
+use_cached_property = st.checkbox("Select from cached properties", value=False)
+
+if use_cached_property:
+    if on_market_df is not None or off_market_df is not None:
+        property_source = st.radio("Property Source", ["On-Market", "Off-Market"])
+        
+        if property_source == "On-Market" and on_market_df is not None:
+            st.caption(f"Data from: {format_timestamp(on_timestamp)}")
+            selected_property = st.selectbox(
+                "Select Property",
+                on_market_df.index,
+                format_func=lambda i: f"{on_market_df.loc[i, 'address']} - ${on_market_df.loc[i, 'list_price']:,.0f}"
+            )
+            
+            if st.button("Load Property Data"):
+                row = on_market_df.loc[selected_property]
+                st.session_state.purchase_price = int(row['list_price'])
+                st.session_state.monthly_rent = int(row.get('estimated_rent', row['list_price'] * 0.008))
+                st.session_state.property_tax_annual = int(row.get('property_tax', row['list_price'] * 0.015))
+                st.session_state.hoa_monthly = int(row.get('hoa_fee', 0))
+                st.success("Property data loaded!")
+                
+        elif property_source == "Off-Market" and off_market_df is not None:
+            st.caption(f"Data from: {format_timestamp(off_timestamp)}")
+            selected_property = st.selectbox(
+                "Select Property",
+                off_market_df.index,
+                format_func=lambda i: f"{off_market_df.loc[i, 'address']} - ${off_market_df.loc[i, 'estimated_value']:,.0f}"
+            )
+            
+            if st.button("Load Property Data"):
+                row = off_market_df.loc[selected_property]
+                st.session_state.purchase_price = int(row['estimated_value'])
+                st.session_state.monthly_rent = int(row['estimated_value'] * 0.008)
+                st.session_state.property_tax_annual = int(row.get('property_tax', row['estimated_value'] * 0.015))
+                st.session_state.hoa_monthly = 0
+                st.success("Property data loaded!")
+    else:
+        st.warning("No cached properties available. Fetch data from On-Market or Off-Market pages first.")
+
+st.markdown("---")
 
 # Input form
 st.markdown("### Property Details")
@@ -12,16 +66,36 @@ st.markdown("### Property Details")
 col1, col2 = st.columns(2)
 
 with col1:
-    purchase_price = st.number_input("Purchase Price ($)", min_value=0, value=300000, step=10000)
+    purchase_price = st.number_input(
+        "Purchase Price ($)", 
+        min_value=0, 
+        value=st.session_state.get('purchase_price', 300000), 
+        step=10000
+    )
     down_payment_percent = st.slider("Down Payment (%)", 0, 100, 20, 5)
     interest_rate = st.number_input("Interest Rate (%)", min_value=0.0, value=7.0, step=0.25)
     loan_term = st.selectbox("Loan Term (years)", [15, 20, 30], index=2)
 
 with col2:
-    monthly_rent = st.number_input("Monthly Rent ($)", min_value=0, value=2000, step=100)
-    property_tax_annual = st.number_input("Annual Property Tax ($)", min_value=0, value=4500, step=100)
+    monthly_rent = st.number_input(
+        "Monthly Rent ($)", 
+        min_value=0, 
+        value=st.session_state.get('monthly_rent', 2000), 
+        step=100
+    )
+    property_tax_annual = st.number_input(
+        "Annual Property Tax ($)", 
+        min_value=0, 
+        value=st.session_state.get('property_tax_annual', 4500), 
+        step=100
+    )
     insurance_annual = st.number_input("Annual Insurance ($)", min_value=0, value=1200, step=100)
-    hoa_monthly = st.number_input("Monthly HOA Fee ($)", min_value=0, value=0, step=50)
+    hoa_monthly = st.number_input(
+        "Monthly HOA Fee ($)", 
+        min_value=0, 
+        value=st.session_state.get('hoa_monthly', 0), 
+        step=50
+    )
 
 st.markdown("### Operating Expense Assumptions")
 
