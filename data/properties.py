@@ -260,9 +260,9 @@ def get_on_market_df():
     """Return on-market properties as pandas DataFrame"""
     
     # Check if API key is configured
-    if st.session_state.get('apify_key') and st.session_state.get('use_live_data', False):
+    if st.session_state.get('apify_api_key') and st.session_state.get('use_live_data', False):
         try:
-            api = RealEstateAPI(apify_key=st.session_state.apify_key)
+            api = RealEstateAPI(apify_key=st.session_state.apify_api_key)
             
             # Fetch live data from APIs
             with st.spinner("Fetching live listings from Zillow/Redfin..."):
