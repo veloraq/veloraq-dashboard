@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import streamlit as st
 import credits
+import json
 
 # --- A. FREE METHOD (County Data) ---
 def get_county_leads(zips):
@@ -37,7 +38,6 @@ def get_county_leads(zips):
                         "Year": f['attributes'].get('LAST_SALE_YEAR')
                     })
         except Exception as e:
-            # We silently log minor county errors to keep the UI clean
             print(f"Franklin Error: {e}")
 
         # DELAWARE COUNTY
@@ -87,7 +87,7 @@ def get_parcl_leads(zips, api_key):
         my_bar.progress(int((i / len(zips)) * 100), text=f"Querying Parcl for {zip_code}...")
         
         try:
-            # 2. GET ID (With Error Checking!)
+            # 2. GET ID (With Type Checking Fix)
             search_url = "https://api.parcllabs.com/v1/search/markets"
             res = requests.get(
                 search_url, 
@@ -95,23 +95,24 @@ def get_parcl_leads(zips, api_key):
                 params={"query": zip_code, "location_type": "ZIP5", "limit": 1}
             )
             
-            # --- DEBUGGING BLOCK ---
-            if res.status_code == 401:
-                st.error("⛔ Parcl Error: Invalid API Key. Please check your key.")
-                break
-            if res.status_code == 403:
-                st.error("⛔ Parcl Error: Access Denied (Check your subscription/email verification).")
-                break
+            # Check Status Code First
             if res.status_code != 200:
-                st.error(f"⚠️ API Error {res.status_code}: {res.text}")
+                st.error(f"⚠️ API Error on {zip_code}: {res.status_code} - {res.text}")
                 continue
-            # -----------------------
 
             data = res.json()
-            if not data:
-                st.warning(f"Skipping {zip_code}: Not found in Parcl DB.")
+            
+            # --- 🛠️ THE FIX: Handle Dict vs List ---
+            if isinstance(data, dict):
+                # If API returned a dictionary error (e.g. {"error": "..."})
+                st.warning(f"Parcl returned a message for {zip_code}: {data}")
                 continue
-                
+            
+            if not data:
+                st.warning(f"Skipping {zip_code}: Zip not found in Parcl Database.")
+                continue
+            # ----------------------------------------
+
             pid = data[0]['parcl_id']
             
             # 3. SEARCH PROPERTIES
@@ -140,6 +141,7 @@ def get_parcl_leads(zips, api_key):
                     "Year Built": p.get('year_built', 'N/A')
                 })
         except Exception as e:
+            # Print the FULL error so we can see it
             st.error(f"System Error on {zip_code}: {e}")
 
     my_bar.empty()
