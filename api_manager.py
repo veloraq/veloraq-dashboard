@@ -40,7 +40,7 @@ class RealEstateAPI:
         return status
 
     # ==========================
-    # 🏡 ACTIVE LISTINGS (ZILLOW -> REDFIN FALLBACK)
+    # 🏡 ACTIVE LISTINGS (Results-Based Fallback)
     # ==========================
     def get_active_listings(self, zips, days_back=7):
         if not self.apify_key:
@@ -50,12 +50,11 @@ class RealEstateAPI:
         all_homes = []
         
         for z in zips:
-            # === ATTEMPT 1: ZILLOW (Primary - Cheaper) ===
-            zillow_success = False
+            homes_found_in_zip = False # Track if we actually got usable data
+            
+            # === ATTEMPT 1: ZILLOW (Primary) ===
             try:
                 url = f"https://api.apify.com/v2/acts/maxcopell~zillow-zip-search/run-sync-get-dataset-items?token={self.apify_key}"
-                
-                # Zillow Payload
                 payload = {
                     "zipCodes": [str(z)], 
                     "maxItems": 20,
@@ -66,55 +65,61 @@ class RealEstateAPI:
                 
                 if res.status_code in [200, 201]:
                     data = res.json()
-                    if isinstance(data, list) and len(data) > 0:
-                        zillow_success = True
+                    if isinstance(data, list):
                         for item in data:
+                            # Skip junk strings/URLs
                             if isinstance(item, str): continue 
-                            all_homes.append({
-                                "Address": item.get('address', {}).get('streetAddress', 'N/A'),
-                                "City": item.get('address', {}).get('city', 'N/A'),
-                                "Price": item.get('price', 0),
-                                "Beds": item.get('bedrooms'),
-                                "Baths": item.get('bathrooms'),
-                                "Source": "Zillow",
-                                "Zip": z,
-                                "URL": item.get('url')
-                            })
+                            
+                            # Valid listing found?
+                            addr = item.get('address', {}).get('streetAddress')
+                            if addr:
+                                homes_found_in_zip = True
+                                all_homes.append({
+                                    "Address": addr,
+                                    "City": item.get('address', {}).get('city', 'N/A'),
+                                    "Price": item.get('price', 0),
+                                    "Beds": item.get('bedrooms'),
+                                    "Baths": item.get('bathrooms'),
+                                    "Source": "Zillow",
+                                    "Zip": z,
+                                    "URL": item.get('url')
+                                })
             except Exception as e:
                 print(f"Zillow Error: {e}")
 
             # === ATTEMPT 2: REDFIN (Fallback) ===
-            # Run this ONLY if Zillow failed or found 0 homes
-            if not zillow_success:
-                st.toast(f"🔄 Zillow empty for {z}. Trying Redfin...", icon="🔎")
+            # TRIGGER: Run this if Zillow failed OR if Zillow returned valid-looking data but 0 homes
+            if not homes_found_in_zip:
+                st.toast(f"🔄 Zillow yield was 0 for {z}. Switching to Redfin...", icon="🔎")
                 try:
-                    # NEW ACTOR: benthepythondev/redfin-scraper
+                    # Using the robust 'benthepythondev' scraper
                     url = f"https://api.apify.com/v2/acts/benthepythondev~redfin-scraper/run-sync-get-dataset-items?token={self.apify_key}"
                     
                     payload = {
-                        "location": f"{z}, OH",   # Redfin needs State usually
+                        "location": f"{z}, OH",
                         "listingType": "for_sale",
                         "maxItems": 20
                     }
                     
-                    # Redfin can be slower, giving it 180s
                     res = requests.post(url, json=payload, timeout=180)
                     
                     if res.status_code in [200, 201]:
                         data = res.json()
                         if isinstance(data, list):
                             for item in data:
-                                all_homes.append({
-                                    # Redfin output keys are slightly different
-                                    "Address": item.get('address', 'N/A'),
-                                    "City": item.get('city', 'N/A'),
-                                    "Price": item.get('price', 0),
-                                    "Beds": item.get('beds'),
-                                    "Baths": item.get('baths'),
-                                    "Source": "Redfin",
-                                    "Zip": z,
-                                    "URL": item.get('url')
-                                })
+                                # Redfin format parsing
+                                addr = item.get('address')
+                                if addr:
+                                    all_homes.append({
+                                        "Address": addr,
+                                        "City": item.get('city', 'N/A'),
+                                        "Price": item.get('price', 0),
+                                        "Beds": item.get('beds'),
+                                        "Baths": item.get('baths'),
+                                        "Source": "Redfin",
+                                        "Zip": z,
+                                        "URL": item.get('url')
+                                    })
                 except Exception as e:
                     st.error(f"❌ Redfin Connection Error for {z}: {e}")
 
