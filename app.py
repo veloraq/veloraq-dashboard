@@ -59,24 +59,51 @@ st.markdown("""
 if 'api_keys_configured' not in st.session_state:
     st.session_state.api_keys_configured = False
 
+def get_api_keys():
+    """Get API keys from secrets or sidebar input"""
+    apify_key = None
+    parcl_key = None
+    
+    # Try to get from secrets first
+    try:
+        if hasattr(st, 'secrets') and 'APIFY_API_KEY' in st.secrets:
+            apify_key = st.secrets['APIFY_API_KEY']
+        if hasattr(st, 'secrets') and 'PARCL_API_KEY' in st.secrets:
+            parcl_key = st.secrets['PARCL_API_KEY']
+    except:
+        pass
+    
+    return apify_key, parcl_key
+
+# Get API keys from secrets
+secrets_apify, secrets_parcl = get_api_keys()
+
 # Sidebar - API Configuration
-with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.api_keys_configured):
+with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.api_keys_configured and not secrets_apify):
     st.markdown("### API Keys")
-    st.markdown("Configure your API keys to fetch live data")
     
-    apify_key = st.text_input(
-        "Apify API Key", 
-        type="password", 
-        value=st.session_state.get('apify_key', ''),
-        help="Get your API key from apify.com"
-    )
+    if secrets_apify:
+        st.success("✓ Using Apify API key from secrets")
+        apify_key = secrets_apify
+    else:
+        st.markdown("Configure your API keys to fetch live data")
+        apify_key = st.text_input(
+            "Apify API Key", 
+            type="password", 
+            value=st.session_state.get('apify_key', ''),
+            help="Get your API key from apify.com"
+        )
     
-    parcl_key = st.text_input(
-        "Parcl Labs API Key (Optional)", 
-        type="password", 
-        value=st.session_state.get('parcl_key', ''),
-        help="Get your API key from parcllabs.com for market stats"
-    )
+    if secrets_parcl:
+        st.success("✓ Using Parcl Labs API key from secrets")
+        parcl_key = secrets_parcl
+    else:
+        parcl_key = st.text_input(
+            "Parcl Labs API Key (Optional)", 
+            type="password", 
+            value=st.session_state.get('parcl_key', ''),
+            help="Get your API key from parcllabs.com for market stats"
+        )
     
     if apify_key:
         st.session_state.apify_key = apify_key
