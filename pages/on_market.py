@@ -122,19 +122,27 @@ selected_zips = st.sidebar.multiselect(
 if not selected_zips:
     st.sidebar.warning("Please select at least one zip code")
 
+if len(df) == 0:
+    st.warning("No properties found. Please fetch data or check your cache.")
+    st.stop()
+
 property_types = ["All"] + sorted(df["property_type"].unique().tolist())
 selected_type = st.sidebar.selectbox("Property Type", property_types)
 
+min_price = int(df["list_price"].min()) if len(df) > 0 and df["list_price"].notna().any() else 0
+max_price = int(df["list_price"].max()) if len(df) > 0 and df["list_price"].notna().any() else 1000000
+
 price_range = st.sidebar.slider(
     "Price Range",
-    int(df["list_price"].min()),
-    int(df["list_price"].max()),
-    (int(df["list_price"].min()), int(df["list_price"].max())),
+    min_price,
+    max_price,
+    (min_price, max_price),
     step=10000
 )
 
 if selected_type != "Land" and selected_type != "Commercial":
-    min_beds = st.sidebar.slider("Minimum Bedrooms", 0, int(df["bedrooms"].max()), 0)
+    max_bedrooms = int(df["bedrooms"].max()) if len(df) > 0 and df["bedrooms"].notna().any() else 5
+    min_beds = st.sidebar.slider("Minimum Bedrooms", 0, max_bedrooms, 0)
 else:
     min_beds = 0
 
