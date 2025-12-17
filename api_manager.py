@@ -14,17 +14,19 @@ class RealEstateAPI:
         self.rentcast_key = rentcast_key
 
     def check_credits(self):
-        status = {"apify": {"used": 0.0, "limit": 5.0}, "parcl": {"remaining": 0}}
-        if self.apify_key:
-            try:
-                url = f"https://api.apify.com/v2/users/me/usage/monthly?token={self.apify_key}"
-                res = requests.get(url)
-                if res.status_code == 200:
-                    data = res.json()
-                    status["apify"]["used"] = data.get('data', {}).get('totalUsageCreditsUsd', 0.0)
-            except:
-                pass
-        return status
+    status = {"apify": {"used": 0.0, "limit": 5.0}, "parcl": {"remaining": 0}}
+    if self.apify_key:
+        try:
+            # Use the specialized monthly usage endpoint
+            url = f"https://api.apify.com/v2/users/me/usage/monthly?token={self.apify_key}"
+            res = requests.get(url)
+            if res.status_code == 200:
+                data = res.json()
+                # 'amountAfterVolumeDiscountUsd' is the true dollar amount used
+                status["apify"]["used"] = data.get('data', {}).get('totalUsageCreditsUsd', 0.0)
+        except Exception as e:
+            print(f"Credit check error: {e}")
+    return status
 
     def get_active_listings(self, zips, days_back=7):
         if not self.apify_key:
@@ -88,8 +90,77 @@ class RealEstateAPI:
 
         return pd.DataFrame(all_homes)
 
+    ==========================
+    # 📊 MARKET STATS
+    # ==========================
     def get_market_stats(self, zip_code):
-        return None # Simplified for syntax stability
+        if not self.parcl_key: return None
+        headers = {"Authorization": self.parcl_key}
+        try:
+            res = requests.get("https://api.parcllabs.com/v1/search/markets", headers=headers, params={"query": zip_code, "location_type": "ZIP5", "limit": 1})
+            if res.status_code != 200: return None
+            data = res.json()
+            items = data.get('items', []) if isinstance(data, dict) else data
+            if not items: return None
+            pid = items[0]['parcl_id']
+            res_stats = requests.get(f"https://api.parcllabs.com/v1/market_metrics/{pid}/housing_stock", headers=headers)
+            stock_data = res_stats.json()
+            stock_items = stock_data.get('items', []) if isinstance(stock_data, dict) else stock_data
+            if stock_items:
+                latest = stock_items[0]
+                total = latest.get('all_properties') or 0
+                sf = latest.get('single_family') or 0
+                return {'units': total, 'single_family': sf, 'other': total-sf, 'date': latest.get('date')}
+        except: return None
+        return None
 
+    # ==========================
+    # 🕵️ OFF-MARKET (COUNTY)
+    # ==========================
     def get_off_market_leads(self, zips):
-        return pd.DataFrame() # Simplified for syntax stability
+        leads = []
+        headers = {"User-Agent": "Mozilla/5.0"}
+        for zip_code in zips:
+            # FRANKLIN
+            try:
+                f_url = "https://gis.franklincountyohio.gov/hosting/rest/services/ParcelFeatures/Parcel_Features/MapServer/0/query"
+                queries = [f"ZIPCD='{zip_code}'", f"ZIPCD={zip_code}"]
+                found = False
+                for q in queries:
+                    if found: break
+                    try:
+                        params = {'where': q, 'outFields': 'SITEADDRESS,OWNERNME1,SALEDATE,ZIPCD', 'f': 'json', 'resultRecordCount': 50}
+                        res = requests.get(f_url, params=params, headers=headers, timeout=5)
+                        if res.status_code == 200:
+                            feats = res.json().get('features', [])
+                            if feats: found = True
+                            for f in feats:
+                                attr = f['attributes']
+                                sold_year = self._parse_date(attr.get('SALEDATE'))
+                                if (sold_year and sold_year < 2015) or sold_year is None:
+                                    leads.append({"Address": attr.get('SITEADDRESS'), "Owner": attr.get('OWNERNME1'), "Zip": attr.get('ZIPCD'), "Source": "Franklin Co", "Strategy": f"High Equity ({sold_year or 'Legacy'})"})
+                    except: pass
+            except: pass
+            
+            # DELAWARE
+            try:
+                d_url = "https://maps.delco-gis.org/arcgiswebadaptor/rest/services/AuditorGISWebsite/AuditorMap_PriorYearParcels_WM/MapServer/0/query"
+                params = {'where': f"PROP_ZIP='{zip_code}'", 'outFields': 'PROP_ADDR,OWNER,SALEYEAR', 'f': 'json', 'resultRecordCount': 50}
+                res = requests.get(d_url, params=params, headers=headers, timeout=10, verify=False)
+                if res.status_code == 200:
+                    feats = res.json().get('features', [])
+                    for f in feats:
+                        attr = f['attributes']
+                        yr = attr.get('SALEYEAR')
+                        if yr is None or (str(yr).isdigit() and int(yr) < 2015):
+                            leads.append({"Address": attr.get('PROP_ADDR'), "Owner": attr.get('OWNER'), "Zip": zip_code, "Source": "Delaware Co", "Strategy": f"High Equity ({yr or 'Legacy'})"})
+            except: pass
+        return pd.DataFrame(leads)
+
+    def _parse_date(self, date_val):
+        if not date_val: return None
+        if isinstance(date_val, (int, float)) and date_val > 20000000000: return datetime.fromtimestamp(date_val/1000).year
+        if isinstance(date_val, str):
+            clean = ''.join(filter(str.isdigit, date_val))
+            if len(clean) >= 4: return int(clean[:4])
+        return None
