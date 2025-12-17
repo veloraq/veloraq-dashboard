@@ -1,122 +1,92 @@
 import streamlit as st
 import pandas as pd
-from data.properties import get_off_market_df
+from data.properties import get_on_market_df
 from utils.csv_export import export_to_csv
 from utils.investment_calculator import calculate_investment_analysis
 from config import COLUMBUS_ZIP_CODES
 
 def show():
-    """Display off-market listings page"""
+    """Display on-market listings page"""
     
-    st.title("🏠 Off-Market Listings")
-    st.markdown("Properties likely to hit the market soon based on various indicators")
+    st.title("📍 On-Market Listings")
+    st.markdown("Recently listed properties from the last 7 days")
     
     col1, col2 = st.columns([3, 1])
     with col1:
         st.markdown("### Data Source")
     with col2:
-        use_live_data = st.toggle("Live Data", value=False, help="Fetch from county auditor websites")
+        if st.session_state.get('apify_api_key'):
+            use_live = st.toggle("Use Live Data", value=st.session_state.get('use_live_data', False))
+            st.session_state.use_live_data = use_live
+            if use_live:
+                st.info("🔴 Live Data")
+            else:
+                st.info("📋 Demo Data")
+        else:
+            st.info("📋 Demo Data")
     
     # Load data
-    if use_live_data:
-        if st.session_state.get('apify_api_key'):
-            with st.spinner("Fetching off-market leads from county auditor websites..."):
-                # Use a subset of zip codes to avoid long wait times
-                selected_zips = st.multiselect(
-                    "Select Zip Codes",
-                    COLUMBUS_ZIP_CODES,
-                    default=COLUMBUS_ZIP_CODES[:5],
-                    help="Select zip codes to search (fewer = faster)"
-                )
-                
-                if st.button("🔍 Fetch Off-Market Leads", type="primary"):
-                    try:
-                        from utils.api_manager import RealEstateAPI
-                        api = RealEstateAPI(apify_key=st.session_state.apify_api_key)
-                        df_raw = api.get_off_market_leads(selected_zips)
-                        
-                        if df_raw.empty:
-                            st.warning("No off-market leads found. Try different zip codes or use Demo Data.")
-                            df = get_off_market_df()
-                        else:
-                            st.success(f"Found {len(df_raw)} potential off-market leads!")
-                            # Store in session state
-                            st.session_state['off_market_live_data'] = df_raw
-                            df = df_raw
-                    except Exception as e:
-                        st.error(f"Error fetching data: {str(e)}")
-                        df = get_off_market_df()
-                else:
-                    # Use cached data if available
-                    df = st.session_state.get('off_market_live_data', get_off_market_df())
-        else:
-            st.warning("⚠️ Please configure your API key in the sidebar to use live data.")
-            df = get_off_market_df()
-    else:
-        df = get_off_market_df()
+    df = get_on_market_df()
     
+    if st.session_state.get('apify_api_key') and st.session_state.get('use_live_data', False):
+        try:
+            from utils.api_manager import RealEstateAPI
+            api = RealEstateAPI(apify_key=st.session_state.apify_api_key)
+            credits = api.check_credits()
+            st.sidebar.markdown(f"**Apify Credits:** ${credits['apify']['used']:.2f} / ${credits['apify']['limit']:.2f}")
+        except Exception as e:
+            st.sidebar.warning(f"Could not check credits: {str(e)}")
+    
+    # Filters
     st.sidebar.markdown("### Filters")
     
-    # Check if we have demo data structure or live data structure
-    has_property_type = 'property_type' in df.columns
-    has_strategy = 'Strategy' in df.columns
+    # Property type filter
+    property_types = ["All"] + sorted(df["property_type"].unique().tolist())
+    selected_type = st.sidebar.selectbox("Property Type", property_types)
     
-    if has_property_type:
-        # Demo data filters
-        property_types = ["All"] + sorted(df["property_type"].unique().tolist())
-        selected_type = st.sidebar.selectbox("Property Type", property_types)
-        
-        min_equity = st.sidebar.slider("Minimum Equity %", 0, 100, 0, 5)
-        min_years_owned = st.sidebar.slider("Minimum Years Owned", 0, 30, 15, 1)
-        
-        show_probate = st.sidebar.checkbox("Probate/Inheritance", value=False)
-        show_tax_delinquent = st.sidebar.checkbox("Tax Delinquent (2+ years)", value=False)
-        show_foreclosure = st.sidebar.checkbox("Foreclosure", value=False)
-        
-        price_range = st.sidebar.slider(
-            "Estimated Value Range",
-            int(df["estimated_value"].min()),
-            int(df["estimated_value"].max()),
-            (int(df["estimated_value"].min()), int(df["estimated_value"].max())),
-            step=10000
-        )
-        
-        # Apply demo data filters
-        filtered_df = df.copy()
-        
-        if selected_type != "All":
-            filtered_df = filtered_df[filtered_df["property_type"] == selected_type]
-        
-        filtered_df = filtered_df[filtered_df["equity_percent"] >= min_equity]
-        filtered_df = filtered_df[filtered_df["years_owned"] >= min_years_owned]
-        filtered_df = filtered_df[
-            (filtered_df["estimated_value"] >= price_range[0]) &
-            (filtered_df["estimated_value"] <= price_range[1])
-        ]
-        
-        if show_probate:
-            filtered_df = filtered_df[filtered_df["probate"] == True]
-        
-        if show_tax_delinquent:
-            filtered_df = filtered_df[filtered_df["tax_delinquent"] == True]
-        
-        if show_foreclosure:
-            filtered_df = filtered_df[filtered_df["foreclosure"] == True]
+    # Price range
+    price_range = st.sidebar.slider(
+        "Price Range",
+        int(df["list_price"].min()),
+        int(df["list_price"].max()),
+        (int(df["list_price"].min()), int(df["list_price"].max())),
+        step=10000
+    )
     
-    elif has_strategy:
-        # Live data filters (simpler structure)
-        if 'Source' in df.columns:
-            sources = ["All"] + sorted(df["Source"].unique().tolist())
-            selected_source = st.sidebar.selectbox("County Source", sources)
-            
-            if selected_source != "All":
-                filtered_df = df[df["Source"] == selected_source]
-            else:
-                filtered_df = df.copy()
-        else:
-            filtered_df = df.copy()
+    # Bedrooms filter
+    if selected_type != "Land" and selected_type != "Commercial":
+        min_beds = st.sidebar.slider("Minimum Bedrooms", 0, int(df["bedrooms"].max()), 0)
     else:
-        filtered_df = df.copy()
+        min_beds = 0
+    
+    # Days on market
+    max_dom = st.sidebar.slider("Max Days on Market", 1, 7, 7)
+    
+    # Apply filters
+    filtered_df = df.copy()
+    
+    if selected_type != "All":
+        filtered_df = filtered_df[filtered_df["property_type"] == selected_type]
+    
+    filtered_df = filtered_df[
+        (filtered_df["list_price"] >= price_range[0]) &
+        (filtered_df["list_price"] <= price_range[1])
+    ]
+    
+    filtered_df = filtered_df[filtered_df["bedrooms"] >= min_beds]
+    filtered_df = filtered_df[filtered_df["days_on_market"] <= max_dom]
+    
+    # Sort options
+    sort_by = st.selectbox("Sort By", ["Price (Low to High)", "Price (High to Low)", "Days on Market", "Newest Listings"])
+    
+    if sort_by == "Price (Low to High)":
+        filtered_df = filtered_df.sort_values("list_price", ascending=True)
+    elif sort_by == "Price (High to Low)":
+        filtered_df = filtered_df.sort_values("list_price", ascending=False)
+    elif sort_by == "Days on Market":
+        filtered_df = filtered_df.sort_values("days_on_market", ascending=True)
+    elif sort_by == "Newest Listings":
+        filtered_df = filtered_df.sort_values("list_date", ascending=False)
     
     # Display results
     st.markdown(f"### Found {len(filtered_df)} Properties")
@@ -127,71 +97,54 @@ def show():
         st.download_button(
             label="📥 Download CSV",
             data=csv_data,
-            file_name="off_market_properties.csv",
+            file_name="on_market_properties.csv",
             mime="text/csv"
         )
     
-    if has_property_type:
-        # Demo data display (detailed)
-        for idx, row in filtered_df.iterrows():
-            with st.expander(f"{row['address']}, {row['city']}, OH {row['zip']} - ${row['estimated_value']:,.0f}"):
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    st.markdown(f"**Property Type:** {row['property_type']}")
-                    st.markdown(f"**Bedrooms:** {row['bedrooms']} | **Bathrooms:** {row['bathrooms']}")
-                    st.markdown(f"**Square Feet:** {row['sqft']:,} | **Lot Size:** {row['lot_size']} acres")
-                    st.markdown(f"**Year Built:** {row['year_built']}")
-                    st.markdown(f"**Estimated Mortgage:** ${row['estimated_mortgage']:,.0f}")
-                    st.markdown(f"**Equity:** {row['equity_percent']}% (${row['estimated_value'] - row['estimated_mortgage']:,.0f})")
-                    st.markdown(f"**Years Owned:** {row['years_owned']}")
-                    st.markdown(f"**Property Tax:** ${row['property_tax']:,.0f}/year")
-                    
-                    # Indicators
-                    indicators = []
-                    if row['probate']:
-                        indicators.append('🔶 Probate/Inheritance')
-                    if row['tax_delinquent']:
-                        indicators.append(f'🔴 Tax Delinquent ({row["years_delinquent"]} years)')
-                    if row['foreclosure']:
-                        indicators.append('🔴 Foreclosure')
-                    if row['equity_percent'] >= 50:
-                        indicators.append('🟢 High Equity (50%+)')
-                    
-                    if indicators:
-                        st.markdown(" | ".join(indicators))
-                
-                with col2:
-                    st.markdown("### Quick Analysis")
-                    if st.button(f"Analyze Investment", key=f"analyze_{row['id']}"):
-                        st.session_state[f"analyze_{row['id']}"] = True
-                    
-                    if st.session_state.get(f"analyze_{row['id']}", False):
-                        estimated_rent = row['estimated_value'] * 0.008
-                        
-                        analysis = calculate_investment_analysis(
-                            purchase_price=row['estimated_value'],
-                            down_payment_percent=20,
-                            monthly_rent=estimated_rent,
-                            property_tax_annual=row['property_tax']
-                        )
-                        
-                        st.metric("Est. Monthly Rent", f"${analysis['monthly_rent']:,.0f}")
-                        st.metric("Monthly Cash Flow", f"${analysis['cash_flow_monthly']:,.0f}")
-                        st.metric("Cap Rate", f"{analysis['cap_rate']:.2f}%")
-                        st.metric("Cash-on-Cash", f"{analysis['cash_on_cash_return']:.2f}%")
-    
-    elif has_strategy:
-        # Live data display (simpler)
-        for idx, row in filtered_df.iterrows():
-            address = row.get('Address', 'N/A')
-            owner = row.get('Owner', 'N/A')
-            zip_code = row.get('Zip', 'N/A')
-            source = row.get('Source', 'N/A')
-            strategy = row.get('Strategy', 'N/A')
+    # Display properties
+    for idx, row in filtered_df.iterrows():
+        with st.expander(f"{row['address']}, {row['city']}, OH {row['zip']} - ${row['list_price']:,.0f}"):
+            col1, col2 = st.columns([2, 1])
             
-            with st.expander(f"{address} (Zip: {zip_code})"):
-                st.markdown(f"**Owner:** {owner}")
-                st.markdown(f"**Source:** {source}")
-                st.markdown(f"**Strategy:** {strategy}")
-                st.info("💡 This is a lead from county records. Research further to verify opportunity.")
+            with col1:
+                st.markdown(f"**Property Type:** {row['property_type']}")
+                if row['bedrooms'] > 0:
+                    st.markdown(f"**Bedrooms:** {row['bedrooms']} | **Bathrooms:** {row['bathrooms']}")
+                if row['sqft'] > 0:
+                    st.markdown(f"**Square Feet:** {row['sqft']:,}")
+                if row['lot_size'] > 0:
+                    st.markdown(f"**Lot Size:** {row['lot_size']} acres")
+                if row['year_built'] > 0:
+                    st.markdown(f"**Year Built:** {row['year_built']}")
+                st.markdown(f"**List Date:** {row['list_date']}")
+                st.markdown(f"**Days on Market:** {row['days_on_market']}")
+                st.markdown(f"**Property Tax:** ${row['property_tax']:,.0f}/year")
+                if row['hoa_fee'] > 0:
+                    st.markdown(f"**HOA Fee:** ${row['hoa_fee']:,.0f}/month")
+                if row['estimated_rent'] > 0:
+                    st.markdown(f"**Estimated Rent:** ${row['estimated_rent']:,.0f}/month")
+                
+                st.markdown(f"**Description:** {row['description']}")
+                
+                # Status badge
+                st.markdown('<span class="badge badge-success">Active</span>', unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("### Investment Analysis")
+                if st.button(f"Run Full Analysis", key=f"analyze_{row['id']}"):
+                    st.session_state[f"analyze_{row['id']}"] = True
+                
+                if st.session_state.get(f"analyze_{row['id']}", False):
+                    analysis = calculate_investment_analysis(
+                        purchase_price=row['list_price'],
+                        down_payment_percent=20,
+                        monthly_rent=row['estimated_rent'],
+                        property_tax_annual=row['property_tax'],
+                        hoa_monthly=row['hoa_fee']
+                    )
+                    
+                    st.metric("Monthly Rent", f"${analysis['monthly_rent']:,.0f}")
+                    st.metric("Monthly Cash Flow", f"${analysis['cash_flow_monthly']:,.0f}")
+                    st.metric("Annual Cash Flow", f"${analysis['cash_flow_annual']:,.0f}")
+                    st.metric("Cap Rate", f"{analysis['cap_rate']:.2f}%")
+                    st.metric("Cash-on-Cash Return", f"{analysis['cash_on_cash_return']:.2f}%")
