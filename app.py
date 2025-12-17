@@ -18,9 +18,24 @@ with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/real-estate.png", width=80)
     st.title("VeloRaq Settings")
     
+    # 🕵️ SMARTER API KEY MANAGEMENT
+    apify_key = None
+    parcl_key = None
+
     with st.expander("🔑 API Credentials", expanded=True):
-        apify_key = st.text_input("Apify Token", type="password")
-        parcl_key = st.text_input("Parcl Key", type="password")
+        # Handle Apify Key
+        if "APIFY_TOKEN" in st.secrets and st.secrets["APIFY_TOKEN"]:
+            apify_key = st.secrets["APIFY_TOKEN"]
+            st.success("✅ Apify Token loaded from secrets")
+        else:
+            apify_key = st.text_input("Apify Token (Manual)", type="password", help="Paste your Apify token here")
+
+        # Handle Parcl Key
+        if "PARCL_KEY" in st.secrets and st.secrets["PARCL_KEY"]:
+            parcl_key = st.secrets["PARCL_KEY"]
+            st.success("✅ Parcl Key loaded from secrets")
+        else:
+            parcl_key = st.text_input("Parcl Key (Manual)", type="password", help="Paste your Parcl key here")
     
     with st.expander("🔎 Search Parameters", expanded=True):
         days_back = st.slider("Lookback Period (Days)", 1, 90, 30)
@@ -29,11 +44,20 @@ with st.sidebar:
 
     # Accurate Live Usage tracking
     st.divider()
-    api = RealEstateAPI(apify_key=apify_key, parcl_key=parcl_key)
+    
+    # Only initialize if keys are present to avoid crashes
     if apify_key:
+        api = RealEstateAPI(apify_key=apify_key, parcl_key=parcl_key)
         usage = api.check_credits()
         st.metric("Apify Usage", f"${usage['apify']['used']:.2f}", delta_color="inverse")
         st.caption(f"Limit: $5.00 / Used: {usage['apify']['used']/5.0*100:.1f}%")
+    else:
+        st.warning("⚠️ Enter Apify Token to enable usage tracking.")
+
+# --- STOP IF NO KEYS ---
+if not apify_key:
+    st.info("👋 Welcome! Please enter your API keys in the sidebar (or add them to secrets) to begin.")
+    st.stop()
 
 # --- MAIN DASHBOARD ---
 st.title("🏙️ Columbus RE Investor")
@@ -54,7 +78,6 @@ tab_active, tab_off = st.tabs(["🏡 On-Market Listings", "🕵️ Off-Market Hu
 with tab_active:
     st.header("Recently Listed in Ohio")
     
-    # Header Action Row
     col_info, col_btn = st.columns([3, 1])
     with col_info:
         st.info(f"Scanning zips: {', '.join(zips)}")
@@ -75,12 +98,9 @@ with tab_active:
                         if i + j < len(df):
                             row = df.iloc[i + j]
                             with cols[j]:
-                                # THE PROPERTY CARD
                                 with st.container(border=True):
-                                    # Visual Placeholder (Replicates v0 image look)
                                     st.image("https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=400", caption="Active Listing")
                                     
-                                    # Price Formatting Guard
                                     try:
                                         p_val = float(row['Price'])
                                         display_price = f"${p_val:,.0f}"
@@ -91,7 +111,6 @@ with tab_active:
                                     st.markdown(f"**📍 {row['Address']}**")
                                     st.caption(f"{row.get('City', 'Ohio')}, OH {row.get('Zip', '')}")
                                     
-                                    # Specs Row
                                     s1, s2, s3 = st.columns(3)
                                     s1.write(f"🛏️ {row.get('Beds', '--')}")
                                     s2.write(f"🛁 {row.get('Baths', '--')}")
@@ -99,7 +118,6 @@ with tab_active:
                                     
                                     st.divider()
                                     
-                                    # Action Buttons
                                     st.link_button("🌐 Analyze on Zillow/Redfin", row['URL'], use_container_width=True)
                                     if st.button("📈 Run Deal Calc", key=f"calc_{i+j}", use_container_width=True):
                                         st.toast(f"Starting analysis for {row['Address']}")
