@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import urllib3
 import streamlit as st
+import json
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -50,37 +51,46 @@ class RealEstateAPI:
         all_homes = []
         
         for z in zips:
-            # --- ATTEMPT 1: ZILLOW ---
-            # Using 'maxcopell/zillow-zip-search' with corrected inputs
             try:
+                # --- ATTEMPT 1: ZILLOW ---
+                # Actor: maxcopell/zillow-zip-search
                 url = f"https://api.apify.com/v2/acts/maxcopell~zillow-zip-search/run-sync-get-dataset-items?token={self.apify_key}"
                 
-                # 🛠️ FIX: Using 'zipCodes' (array) instead of 'zipCode'
                 payload = {
-                    "zipCodes": [z],  
-                    "maxItems": 20
+                    "zipCode": z,  # Singular 'zipCode' is safer for this specific actor
+                    "maxItems": 20,
+                    "daysOnZillow": days_back
                 }
                 
-                res = requests.post(url, json=payload, timeout=120)
+                # Timeout increased to 180s (Scrapers can be slow)
+                res = requests.post(url, json=payload, timeout=180)
                 
-                if res.status_code == 201:
+                if res.status_code in [200, 201]:
                     data = res.json()
-                    if not data:
-                        st.warning(f"⚠️ Zillow found 0 listings for {z}. (Try increasing 'Lookback Period')")
                     
-                    for item in data:
-                        all_homes.append({
-                            "Address": item.get('address', {}).get('streetAddress', 'N/A'),
-                            "City": item.get('address', {}).get('city', 'N/A'),
-                            "Price": item.get('price', 0),
-                            "Beds": item.get('bedrooms'),
-                            "Baths": item.get('bathrooms'),
-                            "Source": "Zillow",
-                            "Zip": z,
-                            "URL": item.get('url')
-                        })
+                    # 🛡️ SAFETY CHECK: Is it a List or a Dict?
+                    if isinstance(data, list):
+                        # SUCCESS: It's a list of homes
+                        if not data:
+                            st.warning(f"⚠️ Zillow found 0 listings for {z}.")
+                        
+                        for item in data:
+                            all_homes.append({
+                                "Address": item.get('address', {}).get('streetAddress', 'N/A'),
+                                "City": item.get('address', {}).get('city', 'N/A'),
+                                "Price": item.get('price', 0),
+                                "Beds": item.get('bedrooms'),
+                                "Baths": item.get('bathrooms'),
+                                "Source": "Zillow",
+                                "Zip": z,
+                                "URL": item.get('url')
+                            })
+                    elif isinstance(data, dict):
+                        # FAILURE: It's an error message disguised as a 200 OK
+                        # Usually contains "status": "FAILED" or similar
+                        st.warning(f"⚠️ Apify returned a status message, not listings for {z}:")
+                        st.json(data) # Show the error structure to the user
                 else:
-                    # 🚨 SHOW ERROR: This prints the raw error from Apify to your screen
                     st.error(f"❌ Zillow Error ({z}): {res.status_code} - {res.text}")
             
             except Exception as e:
