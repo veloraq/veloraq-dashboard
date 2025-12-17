@@ -72,7 +72,7 @@ def get_listings(zip_list, days_back=7):
                 location=f"{z}, OH", 
                 listing_type="for_sale", 
                 past_days=days_back,  # <--- DYNAMIC LOOKBACK
-                site_name=["realtor.com"]
+                #site_name=["realtor.com"] ## no more needed
             )
             
             if homes is not None and not homes.empty:
