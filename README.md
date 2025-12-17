@@ -34,6 +34,10 @@ A comprehensive Python-based real estate investment platform for Columbus, Ohio 
      - Insurance (estimated)
    - Assumes 20% down payment by default (configurable)
 
+4. **Data Persistence Options**
+   - **Local JSON Cache**: Automatic caching to local files
+   - **Google Sheets Integration**: Save data to Google Sheets for cross-device access and incremental updates
+
 ## Installation
 
 ```bash
@@ -49,6 +53,47 @@ streamlit run app.py
 The application will open in your browser at `http://localhost:8501`
 
 ## API Configuration
+
+### Option 1: Streamlit Cloud Secrets (Recommended for Deployment)
+
+When deploying to Streamlit Cloud, add your API keys to secrets:
+
+1. In Streamlit Cloud, go to your app settings
+2. Click "Secrets" in the left sidebar
+3. Add your keys in TOML format:
+
+```toml
+APIFY_API_KEY = "your_apify_api_key_here"
+PARCL_API_KEY = "your_parcl_api_key_here"
+GOOGLE_SHEETS_ID = "your_spreadsheet_id_here"
+GOOGLE_SHEETS_CREDENTIALS = '''
+{
+  "type": "service_account",
+  "project_id": "your-project-id",
+  "private_key_id": "key-id",
+  "private_key": "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n",
+  "client_email": "your-service-account@project.iam.gserviceaccount.com",
+  "client_id": "123456789",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/..."
+}
+'''
+```
+
+4. Save and restart the app
+
+The app will automatically detect and use these secrets. No need to enter keys in the UI.
+
+### Option 2: Sidebar Configuration (Local Development)
+
+If secrets are not configured, you can enter API keys directly in the app:
+
+1. Open the app in your browser
+2. In the sidebar, expand "⚙️ API Configuration"
+3. Enter your API keys
+4. Keys are stored in session state for your current session
 
 ### Apify API (For Live On-Market Data)
 
@@ -99,14 +144,63 @@ The platform directly queries public county auditor websites for off-market lead
 3. Add to sidebar configuration
 4. Access market statistics for Columbus zip codes
 
+## Google Sheets Integration (Optional)
+
+Store fetched property data in Google Sheets for incremental updates and cross-device access.
+
+### Why Use Google Sheets?
+
+- **Cross-device Access**: Access your property data from any device
+- **Incremental Updates**: Append new properties without losing old data
+- **Team Collaboration**: Share data with team members
+- **Data History**: Keep historical records of property searches
+- **Offline Mode**: Use previously fetched real data without API calls
+
+### Setup Instructions
+
+1. **Create a Google Cloud Project**
+   - Go to [Google Cloud Console](https://console.cloud.google.com)
+   - Create a new project or select existing one
+   - Enable Google Sheets API for the project
+
+2. **Create Service Account Credentials**
+   - Navigate to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "Service Account"
+   - Give it a name (e.g., "real-estate-app")
+   - Click "Create and Continue"
+   - Skip optional steps and click "Done"
+   - Click on the created service account
+   - Go to "Keys" tab > "Add Key" > "Create new key"
+   - Choose JSON format and download the file
+
+3. **Create Google Sheet**
+   - Create a new Google Sheet at [sheets.google.com](https://sheets.google.com)
+   - Copy the Spreadsheet ID from the URL (between `/d/` and `/edit`)
+   - Share the sheet with the service account email (found in JSON file)
+   - Give it "Editor" permissions
+
+4. **Enable in App**
+   - Open the app sidebar
+   - Expand "📊 Google Sheets Integration (Optional)"
+   - Check "Enable Google Sheets"
+   - Data will now save to Google Sheets instead of local JSON
+
+### Google Sheets Features
+
+- **Automatic Sheet Creation**: Creates tabs for "on_market" and "off_market" data
+- **Timestamp Tracking**: Each record includes last_updated timestamp
+- **Overwrite or Append**: Choose to replace all data or add new records
+- **Fallback to JSON**: Automatically falls back to local cache if Sheets fails
+- **Demo Mode with Real Data**: Use cached Google Sheets data offline
+
 ## Data Sources Summary
 
-| Feature | Data Source | API Required | Real Data |
-|---------|-------------|--------------|-----------|
-| Off-Market Listings | Franklin & Delaware County Auditors | No | ✅ Yes |
-| On-Market Listings | Zillow + Redfin (via Apify) | Yes | ✅ Yes |
-| Market Statistics | Parcl Labs | Yes (Optional) | ✅ Yes |
-| Property Analysis | Calculated from inputs | No | ✅ Yes |
+| Feature | Data Source | API Required | Real Data | Persistence |
+|---------|-------------|--------------|-----------|-------------|
+| Off-Market Listings | Franklin & Delaware County Auditors | No | ✅ Yes | JSON / Google Sheets |
+| On-Market Listings | Zillow + Redfin (via Apify) | Yes | ✅ Yes | JSON / Google Sheets |
+| Market Statistics | Parcl Labs | Yes (Optional) | ✅ Yes | Session only |
+| Property Analysis | Calculated from inputs | No | ✅ Yes | N/A |
 
 ## Project Structure
 
@@ -124,7 +218,10 @@ The platform directly queries public county auditor websites for off-market lead
 ├── utils/
 │   ├── api_manager.py              # Complete API integration
 │   ├── investment_calculator.py    # ROI calculation logic
-│   └── csv_export.py               # CSV export functionality
+│   ├── csv_export.py               # CSV export functionality
+│   ├── data_cache.py               # Local JSON and Google Sheets caching
+│   └── google_sheets_cache.py      # Google Sheets integration
+├── cached_data/                    # Local JSON cache directory (auto-created)
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
@@ -137,6 +234,7 @@ The platform directly queries public county auditor websites for off-market lead
 - Filter by county source and strategy
 - Identifies high-equity properties likely to sell soon
 - Export results to CSV
+- Data automatically cached for offline access
 
 ### 2. View On-Market Listings (Real Data)
 - Configure Apify API key in sidebar
@@ -144,6 +242,7 @@ The platform directly queries public county auditor websites for off-market lead
 - Search recent listings with advanced filters
 - Export filtered results to CSV
 - Run instant investment analysis on any property
+- Data cached to JSON or Google Sheets
 
 ### 3. Analyze Investments
 Input any property details to calculate comprehensive financial metrics including:
@@ -152,6 +251,13 @@ Input any property details to calculate comprehensive financial metrics includin
 - Cap Rate
 - Cash-on-Cash Return
 - Detailed expense breakdown with industry-standard percentages
+
+### 4. Work Offline (Demo Mode with Real Data)
+- After fetching live data once, it's cached locally or in Google Sheets
+- Toggle off "Live Data" to use cached real data
+- See "Data last updated" timestamp
+- No API calls = no credits used
+- Perfect for analysis and filtering previously fetched properties
 
 ## Columbus Market Coverage
 
