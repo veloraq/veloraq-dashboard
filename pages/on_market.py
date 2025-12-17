@@ -9,31 +9,63 @@ from config import COLUMBUS_ZIP_CODES
 st.title("📍 On-Market Listings")
 st.markdown("Recently listed properties from the last 7 days")
 
-col1, col2 = st.columns([3, 1])
+col1, col2, col3 = st.columns([2, 1, 1])
 with col1:
     st.markdown("### Data Source")
 with col2:
     if st.session_state.get('apify_api_key'):
         use_live = st.toggle("Use Live Data", value=st.session_state.get('use_live_data', False))
         st.session_state.use_live_data = use_live
-        if use_live:
-            st.info("🔴 Live Data")
-        else:
-            st.info("📋 Demo Data")
     else:
-        st.info("📋 Demo Data")
+        st.warning("⚠️ Please configure your API key in the sidebar to use live data.")
+        use_live = False
+        
+with col3:
+    if st.session_state.get('apify_api_key') and st.session_state.get('use_live_data', False):
+        if st.button("🔄 Fetch Live Data"):
+            st.session_state.fetch_live_data = True
+        st.success("🔴 Live")
+    else:
+        st.info("📋 Demo")
 
 # Load data
-df = get_on_market_df()
-
-if st.session_state.get('apify_api_key') and st.session_state.get('use_live_data', False):
-    try:
-        from utils.api_manager import RealEstateAPI
-        api = RealEstateAPI(apify_key=st.session_state.apify_api_key)
-        credits = api.check_credits()
-        st.sidebar.markdown(f"**Apify Credits:** ${credits['apify']['used']:.2f} / ${credits['apify']['limit']:.2f}")
-    except Exception as e:
-        st.sidebar.warning(f"Could not check credits: {str(e)}")
+if st.session_state.get('fetch_live_data', False) and st.session_state.get('apify_api_key'):
+    with st.spinner("Fetching live data from Zillow/Redfin..."):
+        try:
+            from utils.api_manager import RealEstateAPI
+            api = RealEstateAPI(apify_key=st.session_state.apify_api_key)
+            
+            # Fetch properties for Columbus zip codes
+            all_properties = []
+            for zip_code in COLUMBUS_ZIP_CODES[:3]:  # Limit to 3 zip codes to save credits
+                properties = api.get_properties_by_zipcode(zip_code, limit=10)
+                all_properties.extend(properties)
+            
+            if all_properties:
+                # Convert to DataFrame
+                df = pd.DataFrame(all_properties)
+                st.session_state.live_properties_df = df
+                st.success(f"✅ Fetched {len(all_properties)} live properties!")
+            else:
+                st.warning("No properties found. Using demo data.")
+                df = get_on_market_df()
+                
+            st.session_state.fetch_live_data = False
+            
+            # Show credit usage
+            credits = api.check_credits()
+            st.sidebar.markdown(f"**Apify Credits:** ${credits['apify']['used']:.2f} / ${credits['apify']['limit']:.2f}")
+            
+        except Exception as e:
+            st.error(f"Error fetching live data: {str(e)}")
+            df = get_on_market_df()
+            st.session_state.fetch_live_data = False
+else:
+    # Use cached live data or demo data
+    if st.session_state.get('use_live_data', False) and 'live_properties_df' in st.session_state:
+        df = st.session_state.live_properties_df
+    else:
+        df = get_on_market_df()
 
 # Filters
 st.sidebar.markdown("### Filters")
