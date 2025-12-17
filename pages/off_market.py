@@ -19,7 +19,7 @@ def show():
     
     # Load data
     if use_live_data:
-        if 'api_manager' in st.session_state and st.session_state.api_manager:
+        if st.session_state.get('apify_api_key'):
             with st.spinner("Fetching off-market leads from county auditor websites..."):
                 # Use a subset of zip codes to avoid long wait times
                 selected_zips = st.multiselect(
@@ -30,16 +30,22 @@ def show():
                 )
                 
                 if st.button("🔍 Fetch Off-Market Leads", type="primary"):
-                    df_raw = st.session_state.api_manager.get_off_market_leads(selected_zips)
-                    
-                    if df_raw.empty:
-                        st.warning("No off-market leads found. Try different zip codes or use Demo Data.")
+                    try:
+                        from utils.api_manager import RealEstateAPI
+                        api = RealEstateAPI(apify_key=st.session_state.apify_api_key)
+                        df_raw = api.get_off_market_leads(selected_zips)
+                        
+                        if df_raw.empty:
+                            st.warning("No off-market leads found. Try different zip codes or use Demo Data.")
+                            df = get_off_market_df()
+                        else:
+                            st.success(f"Found {len(df_raw)} potential off-market leads!")
+                            # Store in session state
+                            st.session_state['off_market_live_data'] = df_raw
+                            df = df_raw
+                    except Exception as e:
+                        st.error(f"Error fetching data: {str(e)}")
                         df = get_off_market_df()
-                    else:
-                        st.success(f"Found {len(df_raw)} potential off-market leads!")
-                        # Store in session state
-                        st.session_state['off_market_live_data'] = df_raw
-                        df = df_raw
                 else:
                     # Use cached data if available
                     df = st.session_state.get('off_market_live_data', get_off_market_df())
