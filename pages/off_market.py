@@ -3,18 +3,23 @@ import pandas as pd
 from data.properties import get_off_market_df
 from utils.csv_export import export_to_csv
 from utils.investment_calculator import calculate_investment_analysis
+from utils.data_cache import save_properties_cache, load_properties_cache, format_timestamp
 from config import COLUMBUS_ZIP_CODES
 
 st.title("🏠 Off-Market Listings")
 st.markdown("Properties likely to hit the market soon based on various indicators")
 
+use_google_sheets = st.session_state.get('use_google_sheets', False)
+cached_df, cached_timestamp = load_properties_cache("off_market", prefer_google_sheets=use_google_sheets)
+
 col1, col2 = st.columns([3, 1])
 with col1:
     st.markdown("### Data Source")
+    if cached_timestamp:
+        st.caption(f"Data last updated: {format_timestamp(cached_timestamp)}")
 with col2:
     use_live_data = st.toggle("Live Data", value=False, help="Fetch from county auditor websites")
 
-# Load data
 if use_live_data:
     if st.session_state.get('apify_api_key'):
         with st.spinner("Fetching off-market leads from county auditor websites..."):
@@ -33,22 +38,25 @@ if use_live_data:
                     df_raw = api.get_off_market_leads(selected_zips)
                     
                     if df_raw.empty:
-                        st.warning("No off-market leads found. Try different zip codes or use Demo Data.")
-                        df = get_off_market_df()
+                        st.warning("No off-market leads found. Using cached or demo data.")
+                        df = cached_df if cached_df is not None else get_off_market_df()
                     else:
-                        st.success(f"Found {len(df_raw)} potential off-market leads!")
+                        timestamp = save_properties_cache(df_raw, "off_market", use_google_sheets=use_google_sheets)
+                        
+                        cache_type = "Google Sheets" if use_google_sheets else "local cache"
+                        st.success(f"Found {len(df_raw)} potential off-market leads and saved to {cache_type}!")
                         st.session_state['off_market_live_data'] = df_raw
                         df = df_raw
                 except Exception as e:
                     st.error(f"Error fetching data: {str(e)}")
-                    df = get_off_market_df()
+                    df = cached_df if cached_df is not None else get_off_market_df()
             else:
-                df = st.session_state.get('off_market_live_data', get_off_market_df())
+                df = st.session_state.get('off_market_live_data', cached_df if cached_df is not None else get_off_market_df())
     else:
-        st.warning("⚠️ Please configure your API key in the sidebar to use live data.")
-        df = get_off_market_df()
+        st.warning("Configure your API key in the sidebar to use live data.")
+        df = cached_df if cached_df is not None else get_off_market_df()
 else:
-    df = get_off_market_df()
+    df = cached_df if cached_df is not None else get_off_market_df()
 
 st.sidebar.markdown("### Filters")
 
