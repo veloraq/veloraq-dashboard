@@ -78,8 +78,15 @@ def get_api_keys():
 # Get API keys from secrets
 secrets_apify, secrets_parcl = get_api_keys()
 
+if secrets_apify:
+    st.session_state.apify_api_key = secrets_apify
+    st.session_state.apify_key = secrets_apify  # Legacy compatibility
+if secrets_parcl:
+    st.session_state.parcl_api_key = secrets_parcl
+    st.session_state.parcl_key = secrets_parcl  # Legacy compatibility
+
 # Sidebar - API Configuration
-with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.api_keys_configured and not secrets_apify):
+with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_state.get('apify_api_key')):
     st.markdown("### API Keys")
     
     if secrets_apify:
@@ -90,7 +97,7 @@ with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_sta
         apify_key = st.text_input(
             "Apify API Key", 
             type="password", 
-            value=st.session_state.get('apify_key', ''),
+            value=st.session_state.get('apify_api_key', ''),
             help="Get your API key from apify.com"
         )
     
@@ -101,12 +108,13 @@ with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_sta
         parcl_key = st.text_input(
             "Parcl Labs API Key (Optional)", 
             type="password", 
-            value=st.session_state.get('parcl_key', ''),
+            value=st.session_state.get('parcl_api_key', ''),
             help="Get your API key from parcllabs.com for market stats"
         )
     
     if apify_key:
-        st.session_state.apify_key = apify_key
+        st.session_state.apify_api_key = apify_key
+        st.session_state.apify_key = apify_key  # Legacy compatibility
         st.session_state.api_keys_configured = True
         
         # Create API manager instance
@@ -122,6 +130,8 @@ with st.sidebar.expander("⚙️ API Configuration", expanded=not st.session_sta
             st.success(f"✓ Apify configured - ${credits['apify']['used']:.2f} / ${credits['apify']['limit']:.2f} used")
             
             if parcl_key:
+                st.session_state.parcl_api_key = parcl_key
+                st.session_state.parcl_key = parcl_key
                 st.success("✓ Parcl Labs configured")
         except:
             st.success("✓ Apify configured")
@@ -136,11 +146,11 @@ page = st.sidebar.radio(
 )
 
 # Route to appropriate page
-if page == "Home":
-    home.show()
-elif page == "Off-Market Listings":
-    off_market.show()
-elif page == "On-Market Listings":
-    on_market.show()
-elif page == "Investment Analysis":
-    analysis.show()
+# if page == "Home":
+#     home.show()
+# elif page == "Off-Market Listings":
+#     off_market.show()
+# elif page == "On-Market Listings":
+#     on_market.show()
+# elif page == "Investment Analysis":
+#     analysis.show()
