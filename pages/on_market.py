@@ -3,21 +3,28 @@ import pandas as pd
 from data.properties import get_on_market_df
 from utils.csv_export import export_to_csv
 from utils.investment_calculator import calculate_investment_analysis
+from utils.data_cache import save_properties_cache, load_properties_cache, format_timestamp
 from config import COLUMBUS_ZIP_CODES
 
 
 st.title("📍 On-Market Listings")
 st.markdown("Recently listed properties from the last 7 days")
 
+use_google_sheets = st.session_state.get('use_google_sheets', False)
+cached_df, cached_timestamp = load_properties_cache("on_market", prefer_google_sheets=use_google_sheets)
+
 col1, col2, col3 = st.columns([2, 1, 1])
 with col1:
     st.markdown("### Data Source")
+    if cached_timestamp:
+        st.caption(f"Data last updated: {format_timestamp(cached_timestamp)}")
+    
 with col2:
     if st.session_state.get('apify_api_key'):
         use_live = st.toggle("Use Live Data", value=st.session_state.get('use_live_data', False))
         st.session_state.use_live_data = use_live
     else:
-        st.warning("⚠️ Please configure your API key in the sidebar to use live data.")
+        st.warning("Configure API key in sidebar")
         use_live = False
         
 with col3:
@@ -26,9 +33,11 @@ with col3:
             st.session_state.fetch_live_data = True
         st.success("🔴 Live")
     else:
-        st.info("📋 Demo")
+        if cached_df is not None:
+            st.info("📂 Cached")
+        else:
+            st.info("📋 Demo")
 
-# Load data
 if st.session_state.get('fetch_live_data', False) and st.session_state.get('apify_api_key'):
     with st.spinner("Fetching live data from Zillow/Redfin..."):
         try:
@@ -44,11 +53,15 @@ if st.session_state.get('fetch_live_data', False) and st.session_state.get('apif
             if all_properties:
                 # Convert to DataFrame
                 df = pd.DataFrame(all_properties)
+                
+                timestamp = save_properties_cache(df, "on_market", use_google_sheets=use_google_sheets)
+                
+                cache_type = "Google Sheets" if use_google_sheets else "local cache"
+                st.success(f"Fetched {len(all_properties)} live properties and saved to {cache_type}!")
                 st.session_state.live_properties_df = df
-                st.success(f"✅ Fetched {len(all_properties)} live properties!")
             else:
-                st.warning("No properties found. Using demo data.")
-                df = get_on_market_df()
+                st.warning("No properties found. Using cached or demo data.")
+                df = cached_df if cached_df is not None else get_on_market_df()
                 
             st.session_state.fetch_live_data = False
             
@@ -58,12 +71,13 @@ if st.session_state.get('fetch_live_data', False) and st.session_state.get('apif
             
         except Exception as e:
             st.error(f"Error fetching live data: {str(e)}")
-            df = get_on_market_df()
+            df = cached_df if cached_df is not None else get_on_market_df()
             st.session_state.fetch_live_data = False
 else:
-    # Use cached live data or demo data
     if st.session_state.get('use_live_data', False) and 'live_properties_df' in st.session_state:
         df = st.session_state.live_properties_df
+    elif cached_df is not None:
+        df = cached_df
     else:
         df = get_on_market_df()
 
